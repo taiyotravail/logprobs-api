@@ -1,0 +1,42 @@
+# Environnements Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Git / VCS
+.git/
+.gitignore
+.gitattributes
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Notebooks (le .ipynb fait ~1.2 MB et n'est pas requis pour l'app)
+*.ipynb
+.ipynb_checkpoints/
+
+# Docker (pas besoin de se réinclure soi-même)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Documentation hors code
+README.md
+LICENSE
+CLAUDE.md
+
+# Artefacts de build
+build/
+dist/
+*.log
