@@ -7,6 +7,9 @@ réponses peu fiables avant qu'elles n'atteignent l'utilisateur. Si la confiance
 du modèle tombe sous un seuil défini, la réponse est bloquée et remplacée par un
 message de transfert vers un opérateur humain.
 
+Le détecteur est aussi exposé en **API REST** (FastAPI), déployable
+gratuitement pour l'intégrer à un site web : voir [API REST](#api-rest).
+
 Cible : **santé, legaltech, finance, assurance** — tous les secteurs où une IA
 qui invente avec assurance n'est pas une option.
 
@@ -68,10 +71,10 @@ ollama serve
 Dans un **deuxième terminal**, à la racine du projet :
 
 ```bash
-docker build -t logprobs-demo .
+docker build -f Dockerfile.streamlit -t logprobs-demo .
 ```
 
-Le build force la plateforme `linux/amd64` au niveau du `Dockerfile`,
+Le build force la plateforme `linux/amd64` au niveau du `Dockerfile.streamlit`,
 l'image produite tourne donc nativement sur Windows et Linux x86_64 (et via
 émulation sur Mac Apple Silicon).
 
@@ -148,6 +151,218 @@ streamlit run app.py
 
 L'interface est accessible sur http://localhost:8501.
 
+## API REST
+
+`api.py` expose le détecteur en HTTP. L'image Docker de l'API (`Dockerfile`)
+est **autonome** : elle embarque Ollama, `phi4-mini` et le modèle spaCy. Aucun
+service externe n'est nécessaire.
+
+### Endpoints
+
+| Méthode | Chemin     | Rôle                                                              |
+| ------- | ---------- | ----------------------------------------------------------------- |
+| `GET`   | `/health`  | Sonde de vie. À appeler au chargement du site pour réveiller le serveur. |
+| `POST`  | `/analyze` | Pose la question, renvoie la réponse et la décision de blocage.   |
+| `GET`   | `/docs`    | Documentation interactive (Swagger).                              |
+
+Requête :
+
+```json
+{ "question": "Quelle est la capitale de la France ?", "threshold": 70 }
+```
+
+`threshold` est optionnel (défaut : 70). La question fait au maximum
+500 caractères.
+
+Réponse (extrait) :
+
+```json
+{
+  "answer": "Paris est la capitale de la France.",
+  "blocked": false,
+  "raw_answer": "Paris est la capitale de la France.",
+  "threshold": 70,
+  "weakest_probability": 86.25,
+  "weakest_token": "Paris",
+  "critical_tokens": [{ "token": "Paris", "word": "Paris", "pos": "PROPN", "probability": 86.25 }],
+  "tokens": [{ "token": "Paris", "probability": 86.25, "alternatives": [{ "token": "Paris", "probability": 86.25 }] }],
+  "model": "phi4-mini:latest"
+}
+```
+
+- `answer` est le texte à afficher : la réponse du modèle, ou le message de
+  transfert humain si elle est bloquée.
+- `raw_answer` contient la réponse brute, même bloquée : c'est ce qui permet
+  la démo « protection on/off ». Avec `EXPOSE_BLOCKED_ANSWERS=false`, une
+  réponse bloquée n'est plus envoyée du tout (`raw_answer` vaut `null`,
+  `tokens` et `critical_tokens` sont vides).
+- `tokens` permet de tracer le graphique des probabilités côté site.
+
+Codes d'erreur : `422` requête invalide, `429` quota du jour atteint, `503`
+modèle surchargé (réessayer), `502` réponse du modèle inexploitable.
+
+### Lancer l'API en local (sans Docker)
+
+Avec Ollama lancé sur la machine :
+
+```bash
+pip install -r requirements-api.txt
+python -m spacy download fr_core_news_md
+uvicorn api:app --port 8000 --no-access-log
+```
+
+Puis ouvrir http://localhost:8000/docs.
+
+### Variables d'environnement de l'API
+
+| Variable               | Défaut           | Rôle                                                      |
+| ---------------------- | ---------------- | --------------------------------------------------------- |
+| `API_ALLOWED_ORIGINS`  | `*`              | Origines autorisées (CORS), séparées par des virgules.    |
+| `DAILY_ANALYSIS_LIMIT` | `100`            | Analyses max par jour, tous visiteurs confondus (0 = illimité). |
+| `EXPOSE_BLOCKED_ANSWERS` | `true`         | Renvoyer le contenu d'une réponse bloquée (démo). `false` en production. |
+| `MAX_QUESTION_LENGTH`  | `500`            | Longueur max d'une question (caractères).                 |
+| `MAX_ANSWER_TOKENS`    | `150`            | Longueur max d'une réponse (tokens).                      |
+| `LLM_TIMEOUT_SECONDS`  | `120`            | Délai max d'une inférence.                                |
+| `DEFAULT_MODEL`        | `phi4-mini:latest` | Modèle Ollama utilisé.                                  |
+
+### Confidentialité (RGPD)
+
+- Les questions et réponses ne sont **jamais** écrites dans les logs. Seuls
+  la durée, la décision de blocage et le type d'erreur le sont.
+- Le log d'accès d'uvicorn, qui contient l'IP des visiteurs, est désactivé.
+- Ollama tourne dans le conteneur et n'écoute qu'en local (`127.0.0.1`) : les
+  questions ne sortent jamais du serveur.
+- Un test automatisé vérifie qu'aucune question ne fuit dans les logs.
+
+## Déploiement gratuit (Google Cloud Run)
+
+Cloud Run ne facture que le temps de traitement des requêtes et **s'éteint
+quand personne ne l'utilise**. Au premier appel après une période
+d'inactivité (jusqu'à ~15 min), le serveur redémarre. Ce réveil devrait
+prendre environ 1 à 2 min (estimation, à mesurer après le premier
+déploiement). Les appels suivants sont rapides.
+
+L'offre gratuite couvre chaque mois 180 000 vCPU-secondes et 360 000 Gio-secondes.
+Avec 4 vCPU et 8 Gio, cela représente environ 12 h de calcul par mois. Cela
+suffit largement pour une démo, mais chaque réveil consomme aussi environ une
+minute. Le quota `DAILY_ANALYSIS_LIMIT` plafonne le nombre d'analyses, ce qui
+limite la consommation sans la garantir à 100 %.
+
+> ⚠️ Google exige un **compte de facturation** (carte bancaire) même pour
+> l'offre gratuite. Le stockage de l'image (~4 Go dans Artifact Registry)
+> dépasse les 0,5 Go gratuits et coûte quelques dizaines de centimes par
+> mois. Créez une **alerte budgétaire** (Facturation → Budgets et alertes)
+> pour être prévenu au moindre euro.
+
+### Étapes
+
+1. Ouvrir **Cloud Shell** (icône `>_` en haut à droite de la console Google
+   Cloud) : un terminal dans le navigateur où `gcloud` est déjà installé et
+   connecté, puis cloner le dépôt :
+
+   ```bash
+   git clone https://github.com/taiyotravail/logprobs-api.git && cd logprobs-api
+   ```
+
+   Vous pouvez aussi installer la CLI en local :
+   https://cloud.google.com/sdk/docs/install
+2. Créer un projet, activer les services et créer le dépôt d'images (une
+   seule fois) :
+
+   ```bash
+   gcloud auth login
+   gcloud projects create logprobs-api-<suffixe-unique>
+   gcloud config set project logprobs-api-<suffixe-unique>
+   # Lier un compte de facturation au projet dans la console Google Cloud, puis :
+   gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+   gcloud artifacts repositories create logprobs --repository-format=docker --location=europe-west1
+   ```
+
+3. Construire l'image chez Google, depuis la racine du projet. Rien n'est
+   construit sur votre machine. Comptez 10 à 15 min : le délai est porté à
+   30 min, car celui par défaut (10 min) est trop court pour télécharger le
+   modèle.
+
+   ```bash
+   IMAGE="europe-west1-docker.pkg.dev/$(gcloud config get-value project)/logprobs/api"
+   gcloud builds submit --tag "$IMAGE" --timeout=30m .
+   ```
+
+4. Déployer :
+
+   ```bash
+   gcloud run deploy logprobs-api \
+     --image "$IMAGE" \
+     --region europe-west1 \
+     --allow-unauthenticated \
+     --cpu 4 --memory 8Gi \
+     --min-instances 0 --max-instances 1 \
+     --concurrency 5 \
+     --timeout 300 \
+     --cpu-boost \
+     --set-env-vars "^@^API_ALLOWED_ORIGINS=https://mon-site.fr,https://www.mon-site.fr@DAILY_ANALYSIS_LIMIT=100@EXPOSE_BLOCKED_ANSWERS=true"
+   ```
+
+   - `--min-instances 0` : le serveur s'éteint quand il n'est pas utilisé
+     (gratuit), au prix du temps de réveil.
+   - `--max-instances 1` : plafonne la consommation.
+   - `europe-west1` (Belgique) : les données restent dans l'UE.
+   - Ne cochez **pas** « CPU toujours alloué » : le CPU serait facturé en
+     permanence.
+   - Le préfixe `^@^` change le séparateur des variables, ce qui permet de
+     mettre des virgules dans `API_ALLOWED_ORIGINS`.
+   - `EXPOSE_BLOCKED_ANSWERS=true` sert à la démo « protection on/off ». Pour
+     un usage réel, passez-le à `false` : la réponse bloquée n'est alors plus
+     envoyée au navigateur.
+
+5. La commande affiche l'URL du service (`https://logprobs-api-….run.app`).
+   Tester :
+
+   ```bash
+   curl https://logprobs-api-….run.app/health
+   ```
+
+Pour redéployer après une modification, relancez les étapes 3 et 4. Chaque
+build stocke une nouvelle image de ~4 Go, et l'ancienne reste facturée.
+Supprimez les anciennes versions dans la console (Artifact Registry →
+`logprobs` → `api`) ou configurez une
+[règle de nettoyage](https://cloud.google.com/artifact-registry/docs/repositories/cleanup-policy)
+qui ne garde que la plus récente.
+
+### Intégration dans le site
+
+```js
+const API_URL = "https://logprobs-api-….run.app";
+
+// Dès le chargement de la page : réveille le serveur pendant que le
+// visiteur tape sa question.
+fetch(`${API_URL}/health`).catch(() => {});
+
+async function analyser(question, seuil = 70) {
+  const response = await fetch(`${API_URL}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, threshold: seuil }),
+  });
+  if (response.status === 429) throw new Error("Quota du jour atteint, réessayez demain.");
+  if (!response.ok) throw new Error(`Erreur ${response.status}`);
+  return response.json(); // { answer, blocked, raw_answer, tokens, ... }
+}
+```
+
+Si le serveur dormait, la première réponse peut prendre 1 à 2 min. Affichez
+un message du type « Réveil du serveur… » tant que la requête est en cours.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Les tests n'ont besoin ni d'Ollama ni du modèle spaCy : le LLM et
+l'étiquetage grammatical sont simulés.
+
 ## Utilisation
 
 1. Ajuster le seuil de confiance dans la sidebar (défaut : 70 %).
@@ -166,18 +381,27 @@ Découpage modulaire (cf. standards `CLAUDE.md`) :
 ```
 .
 ├── app.py                   # UI Streamlit (orchestration uniquement)
-├── config.py                # constantes (URL, modèle, seuil, message)
+├── api.py                   # API REST FastAPI (/health, /analyze)
+├── detection_service.py     # orchestration LLM → POS → décision (sans UI)
+├── usage_quota.py           # quota quotidien d'analyses (garde-fou de coût)
+├── config.py                # constantes (URL, modèle, seuil, message, API)
 ├── llm_client.py            # client Ollama (API compat OpenAI)
 ├── confidence_analyzer.py   # logique métier : POS + maillon faible
 ├── plots.py                 # visualisations matplotlib
-├── Dockerfile               # image de production (linux/amd64)
+├── Dockerfile               # image de l'API : Ollama + phi4-mini embarqués
+├── start-api.sh             # démarrage du conteneur API (Ollama puis uvicorn)
+├── Dockerfile.streamlit     # image de la démo Streamlit (linux/amd64)
 ├── .dockerignore            # exclusions du build context
-├── requirements.txt         # dépendances Python
+├── requirements.txt         # dépendances de l'UI Streamlit
+├── requirements-api.txt     # dépendances de l'API
+├── requirements-dev.txt     # dépendances de test
+├── tests/                   # tests unitaires (pytest)
 └── logprobs.ipynb           # notebook d'exploration initial
 ```
 
-Les modules `confidence_analyzer` et `plots` n'ont aucune dépendance vis-à-vis
-de Streamlit : ils sont réutilisables (API REST, batch jobs, tests unitaires).
+Les modules `confidence_analyzer`, `detection_service` et `plots` n'ont aucune
+dépendance vis-à-vis de Streamlit ni de FastAPI : ils sont réutilisables (API
+REST, batch jobs, tests unitaires).
 
 ## Limites connues
 
@@ -193,7 +417,6 @@ de Streamlit : ils sont réutilisables (API REST, batch jobs, tests unitaires).
 
 ## Pistes d'extension
 
-- Empaqueter `confidence_analyzer` dans une API FastAPI pour intégration prod.
 - Calibrer automatiquement le seuil sur un dataset annoté (vraies vs. fausses
   réponses).
 - Ajouter un mode "streaming" pour bloquer la réponse dès qu'un token critique

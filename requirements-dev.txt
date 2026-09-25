@@ -1,0 +1,4 @@
+# Dépendances de test (non installées dans l'image Docker).
+-r requirements-api.txt
+pytest>=8,<10
+httpx>=0.27,<1

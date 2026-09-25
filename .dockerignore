@@ -40,3 +40,8 @@ CLAUDE.md
 build/
 dist/
 *.log
+
+# Tests et outillage de dev (non embarqués dans les images)
+tests/
+requirements-dev.txt
+pytest.ini

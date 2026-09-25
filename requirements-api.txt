@@ -1,0 +1,6 @@
+# Dépendances de l'API REST (image Docker de production).
+# L'UI Streamlit utilise requirements.txt.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+openai>=2.0,<3
+spacy>=3.8,<4
