@@ -2,13 +2,13 @@
 
 > Comment empêcher une IA d'halluciner avec assurance quand elle ne sait pas ?
 
-Démo Streamlit qui analyse les **logprobs** d'un LLM local pour détecter les
-réponses peu fiables avant qu'elles n'atteignent l'utilisateur. Si la confiance
-du modèle tombe sous un seuil défini, la réponse est bloquée et remplacée par un
-message de transfert vers un opérateur humain.
+API REST qui analyse les **logprobs** d'un LLM (`phi4-mini` via Ollama) pour
+détecter les réponses peu fiables avant qu'elles n'atteignent l'utilisateur. Si
+la confiance du modèle tombe sous un seuil défini, la réponse est bloquée et
+remplacée par un message de transfert vers un opérateur humain.
 
-Le détecteur est aussi exposé en **API REST** (FastAPI), déployable
-gratuitement pour l'intégrer à un site web : voir [API REST](#api-rest).
+L'API est pensée pour être intégrée à un site web et déployée gratuitement sur
+Google Cloud Run : voir [Déploiement](#déploiement-gratuit-google-cloud-run).
 
 Cible : **santé, legaltech, finance, assurance** — tous les secteurs où une IA
 qui invente avec assurance n'est pas une option.
@@ -38,118 +38,6 @@ inspecte directement les **probabilités de chaque token généré** :
 Le filtre POS est crucial : la ponctuation, les articles et autres mots
 fonctionnels ont souvent une confiance basse sans que ce soit problématique.
 On ne veut bloquer que sur du contenu factuel.
-
-## Lancement rapide avec Docker
-
-C'est la méthode recommandée pour tester l'app sans toucher à un
-environnement Python.
-
-### Prérequis
-
-1. **Docker Desktop** doit être installé et lancé sur ta machine :
-   - Windows / macOS / Linux → [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
-2. **Ollama** doit être installé sur ta machine (le LLM tourne en local pour
-   garder le contrôle des données) :
-   - [https://ollama.com/download](https://ollama.com/download)
-
-### Étape 1 — Récupérer le modèle LLM
-
-Dans un terminal, télécharge `phi4-mini` (~2.5 GB, à faire une fois) et
-laisse Ollama tourner en arrière-plan :
-
-```bash
-ollama pull phi4-mini:latest
-ollama serve
-```
-
-> Sur macOS et Windows, l'app Ollama installée lance `ollama serve`
-> automatiquement au démarrage — la commande n'est nécessaire que sur Linux
-> ou si le service n'est pas déjà actif.
-
-### Étape 2 — Construire l'image Docker
-
-Dans un **deuxième terminal**, à la racine du projet :
-
-```bash
-docker build -f Dockerfile.streamlit -t logprobs-demo .
-```
-
-Le build force la plateforme `linux/amd64` au niveau du `Dockerfile.streamlit`,
-l'image produite tourne donc nativement sur Windows et Linux x86_64 (et via
-émulation sur Mac Apple Silicon).
-
-### Étape 3 — Lancer le conteneur
-
-**Sur macOS et Windows (Docker Desktop)** :
-
-```bash
-docker run --rm -p 8501:8501 \
-  -e DEFAULT_MODEL=phi4-mini:latest \
-  --name logprobs-demo logprobs-demo
-```
-
-**Sur Linux** — il faut ajouter un flag pour que le conteneur résolve
-`host.docker.internal` vers la machine hôte :
-
-```bash
-docker run --rm -p 8501:8501 \
-  --add-host=host.docker.internal:host-gateway \
-  -e DEFAULT_MODEL=phi4-mini:latest \
-  --name logprobs-demo logprobs-demo
-```
-
-### Étape 4 — Ouvrir l'app
-
-Rendez-vous sur **[http://localhost:8501](http://localhost:8501)**
-
-Pour arrêter le conteneur : `Ctrl+C` dans le terminal, ou
-`docker stop logprobs-demo` depuis un autre.
-
-### Variables d'environnement supportées
-
-| Variable           | Défaut (Docker)                        | Rôle                                    |
-| ------------------ | -------------------------------------- | --------------------------------------- |
-| `OLLAMA_BASE_URL`  | `http://host.docker.internal:11434/v1` | URL du serveur Ollama                   |
-| `DEFAULT_MODEL`    | `phi4-mini:latest`                     | Modèle Ollama proposé dans la sidebar   |
-
----
-
-## Installation locale (sans Docker)
-
-### Prérequis
-
-- Python 3.10+
-- [Ollama](https://ollama.com/) installé localement
-- Un modèle Ollama (par défaut `phi4-mini:latest` — petit donc hallucine beaucoup,
-  parfait pour la démo)
-
-### Installation
-
-```bash
-git clone <repo-url>
-cd logprobs
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m spacy download fr_core_news_md
-ollama pull phi4-mini:latest
-```
-
-### Lancement
-
-Dans un terminal, démarrer le serveur Ollama :
-
-```bash
-ollama serve
-```
-
-Dans un autre terminal, lancer l'app :
-
-```bash
-streamlit run app.py
-```
-
-L'interface est accessible sur http://localhost:8501.
 
 ## API REST
 
@@ -201,17 +89,34 @@ Réponse (extrait) :
 Codes d'erreur : `422` requête invalide, `429` quota du jour atteint, `503`
 modèle surchargé (réessayer), `502` réponse du modèle inexploitable.
 
-### Lancer l'API en local (sans Docker)
+### Lancer l'API en local
 
-Avec Ollama lancé sur la machine :
+Prérequis : Python 3.10+ et [Ollama](https://ollama.com/download) installé et
+lancé, avec le modèle téléchargé (~2,5 Go, une seule fois) :
 
 ```bash
-pip install -r requirements-api.txt
+ollama pull phi4-mini:latest
+```
+
+Puis, à la racine du projet :
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 python -m spacy download fr_core_news_md
 uvicorn api:app --port 8000 --no-access-log
 ```
 
-Puis ouvrir http://localhost:8000/docs.
+Ouvrir ensuite http://localhost:8000/docs pour tester avec Swagger.
+
+Avec Docker, l'image est autonome : elle embarque Ollama et le modèle, soit
+~4 Go.
+
+```bash
+docker build -t logprobs-api .
+docker run --rm -p 8080:8080 logprobs-api
+```
 
 ### Variables d'environnement de l'API
 
@@ -224,6 +129,7 @@ Puis ouvrir http://localhost:8000/docs.
 | `MAX_ANSWER_TOKENS`    | `150`            | Longueur max d'une réponse (tokens).                      |
 | `LLM_TIMEOUT_SECONDS`  | `120`            | Délai max d'une inférence.                                |
 | `DEFAULT_MODEL`        | `phi4-mini:latest` | Modèle Ollama utilisé.                                  |
+| `OLLAMA_BASE_URL`      | `http://localhost:11434/v1` | URL d'Ollama (API compatible OpenAI).          |
 
 ### Confidentialité (RGPD)
 
@@ -363,45 +269,29 @@ pytest
 Les tests n'ont besoin ni d'Ollama ni du modèle spaCy : le LLM et
 l'étiquetage grammatical sont simulés.
 
-## Utilisation
-
-1. Ajuster le seuil de confiance dans la sidebar (défaut : 70 %).
-2. Saisir une question — idéalement piège (statistique précise, fait pointu).
-3. Cliquer sur **Analyser**.
-4. L'app affiche :
-   - La réponse du modèle (ou le message de sécurité si seuil non respecté)
-   - Le diagnostic : maillon faible, seuil, nombre de mots critiques
-   - Un scatter plot des top-3 probabilités par token
-   - Le détail des mots critiques avec leur catégorie grammaticale
-
 ## Architecture
 
 Découpage modulaire (cf. standards `CLAUDE.md`) :
 
 ```
 .
-├── app.py                   # UI Streamlit (orchestration uniquement)
 ├── api.py                   # API REST FastAPI (/health, /analyze)
-├── detection_service.py     # orchestration LLM → POS → décision (sans UI)
-├── usage_quota.py           # quota quotidien d'analyses (garde-fou de coût)
-├── config.py                # constantes (URL, modèle, seuil, message, API)
-├── llm_client.py            # client Ollama (API compat OpenAI)
+├── detection_service.py     # orchestration LLM → POS → décision
 ├── confidence_analyzer.py   # logique métier : POS + maillon faible
-├── plots.py                 # visualisations matplotlib
-├── Dockerfile               # image de l'API : Ollama + phi4-mini embarqués
-├── start-api.sh             # démarrage du conteneur API (Ollama puis uvicorn)
-├── Dockerfile.streamlit     # image de la démo Streamlit (linux/amd64)
+├── llm_client.py            # client Ollama (API compat OpenAI)
+├── usage_quota.py           # quota quotidien d'analyses (garde-fou de coût)
+├── config.py                # constantes (URL, modèle, seuil, message, limites)
+├── Dockerfile               # image autonome : Ollama + phi4-mini + API
+├── start-api.sh             # démarrage du conteneur (Ollama puis uvicorn)
 ├── .dockerignore            # exclusions du build context
-├── requirements.txt         # dépendances de l'UI Streamlit
-├── requirements-api.txt     # dépendances de l'API
+├── requirements.txt         # dépendances de l'API
 ├── requirements-dev.txt     # dépendances de test
-├── tests/                   # tests unitaires (pytest)
-└── logprobs.ipynb           # notebook d'exploration initial
+├── pytest.ini               # configuration de pytest
+└── tests/                   # tests unitaires
 ```
 
-Les modules `confidence_analyzer`, `detection_service` et `plots` n'ont aucune
-dépendance vis-à-vis de Streamlit ni de FastAPI : ils sont réutilisables (API
-REST, batch jobs, tests unitaires).
+Les modules `confidence_analyzer` et `detection_service` ne dépendent pas de
+FastAPI : ils sont réutilisables (batch, tests unitaires, autre framework web).
 
 ## Limites connues
 

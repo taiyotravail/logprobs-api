@@ -1,11 +1,8 @@
 """Constantes globales du détecteur d'hallucinations.
 
-`OLLAMA_BASE_URL` et `DEFAULT_MODEL` sont surchargeables via variables
-d'environnement — utile pour pointer vers l'hôte Docker (`host.docker.internal`)
-ou pour changer de modèle sans toucher au code.
-
-Les constantes `API_*` / `MAX_*` / `LLM_*` ne concernent que l'API REST
-(`api.py`) et sont elles aussi surchargeables via l'environnement.
+Les valeurs lues avec `os.getenv` (URL d'Ollama, modèle, limites de l'API)
+sont surchargeables via variables d'environnement, pour changer de
+comportement sans toucher au code.
 """
 
 import os

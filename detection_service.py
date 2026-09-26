@@ -1,8 +1,8 @@
 """Orchestration de la détection d'hallucinations, indépendante de toute UI.
 
 Enchaîne : appel LLM avec logprobs → analyse grammaticale (spaCy) → décision
-de blocage. Aucune dépendance à FastAPI ni à Streamlit : ce module est
-réutilisable depuis l'API REST, un batch ou des tests.
+de blocage. Aucune dépendance à FastAPI : ce module est réutilisable depuis
+l'API REST, un batch ou des tests.
 """
 
 from __future__ import annotations

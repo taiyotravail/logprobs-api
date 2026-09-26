@@ -9,8 +9,6 @@
 # tourne sur n'importe quel hôte Docker :
 #   docker build -t logprobs-api .
 #   docker run --rm -p 8080:8080 logprobs-api
-#
-# L'UI Streamlit a son propre fichier : Dockerfile.streamlit.
 # ---------------------------------------------------------------------------
 
 ARG OLLAMA_VERSION=0.33.1
@@ -74,8 +72,8 @@ RUN export HOME=/home/app; \
 # 2) Dépendances Python (installation système, donc en root).
 USER root
 WORKDIR /app
-COPY requirements-api.txt ./
-RUN pip install -r requirements-api.txt \
+COPY requirements.txt ./
+RUN pip install -r requirements.txt \
  && python -m spacy download fr_core_news_md
 
 # 3) Code applicatif, en lecture seule pour l'utilisateur `app`.
