@@ -160,80 +160,79 @@ limite la consommation sans la garantir à 100 %.
 > mois. Créez une **alerte budgétaire** (Facturation → Budgets et alertes)
 > pour être prévenu au moindre euro.
 
-### Étapes
+### Étapes (tout dans l'interface web, aucune ligne de commande)
 
-1. Ouvrir **Cloud Shell** (icône `>_` en haut à droite de la console Google
-   Cloud) : un terminal dans le navigateur où `gcloud` est déjà installé et
-   connecté, puis cloner le dépôt :
+Tout se fait depuis la console Google Cloud
+(https://console.cloud.google.com). Google construit l'image directement à
+partir du dépôt GitHub : rien n'est installé ni construit sur votre machine.
+Les libellés peuvent varier légèrement selon la version de la console.
 
-   ```bash
-   git clone https://github.com/taiyotravail/logprobs-api.git && cd logprobs-api
-   ```
+1. **Créer un projet** : sélecteur de projet en haut de la page →
+   **Nouveau projet** → nom `logprobs-api` → **Créer**. Vérifiez ensuite que
+   ce projet est bien sélectionné en haut de la page.
+2. **Lier la facturation** : menu ☰ → **Facturation** → **Associer un compte
+   de facturation** (en créer un si besoin, avec votre carte bancaire). En
+   profiter pour créer l'alerte budgétaire : **Budgets et alertes** →
+   **Créer un budget**.
+3. **Ouvrir Cloud Run** : menu ☰ → **Cloud Run** → **Déployer un conteneur**
+   → **Service**. Si la console propose d'activer des API (Cloud Run, Cloud
+   Build, Artifact Registry), acceptez.
+4. **Brancher le dépôt GitHub** : choisir **Déployer en continu à partir
+   d'un dépôt (source ou fonction)** → **Configurer avec Cloud Build**.
+   - Fournisseur : **GitHub** → **S'authentifier** et autoriser l'application
+     Google Cloud Build sur le dépôt `logprobs-api`.
+   - Dépôt : `taiyotravail/logprobs-api` → **Suivant**.
+   - Branche : `^main$`.
+   - Type de compilation : **Dockerfile**, emplacement `/Dockerfile`.
+   - **Enregistrer**.
+5. **Paramètres du service** :
+   - Nom : `logprobs-api`.
+   - Région : `europe-west1 (Belgique)` : les données restent dans l'UE.
+   - Authentification : **Autoriser l'accès public** (anciennement
+     « Autoriser les appels non authentifiés »), sinon le site ne pourra pas
+     appeler l'API.
+   - Facturation : **Basée sur les requêtes** (et **pas** « Basée sur les
+     instances » / « CPU toujours alloué » : le CPU serait facturé en
+     permanence).
+   - Scaling du service : nombre minimal d'instances **0** (le serveur
+     s'éteint quand il n'est pas utilisé, au prix du temps de réveil),
+     nombre maximal **1** (plafonne la consommation).
+6. Déplier **Conteneur(s), volumes, réseau, sécurité** :
+   - Onglet **Paramètres** :
+     - Port du conteneur : `8080`.
+     - Mémoire : **8 Gio** — Processeur : **4**.
+     - Délai avant expiration de la requête : `300` secondes.
+     - Nombre maximal de requêtes simultanées par instance : `5`.
+     - Cocher **Boost du processeur au démarrage** (accélère le réveil).
+   - Onglet **Variables et secrets** → **Ajouter une variable**, trois fois :
 
-   Vous pouvez aussi installer la CLI en local :
-   https://cloud.google.com/sdk/docs/install
-2. Créer un projet, activer les services et créer le dépôt d'images (une
-   seule fois) :
+     | Nom | Valeur |
+     | --- | --- |
+     | `API_ALLOWED_ORIGINS` | `https://mon-site.fr,https://www.mon-site.fr` |
+     | `DAILY_ANALYSIS_LIMIT` | `100` |
+     | `EXPOSE_BLOCKED_ANSWERS` | `true` |
 
-   ```bash
-   gcloud auth login
-   gcloud projects create logprobs-api-<suffixe-unique>
-   gcloud config set project logprobs-api-<suffixe-unique>
-   # Lier un compte de facturation au projet dans la console Google Cloud, puis :
-   gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
-   gcloud artifacts repositories create logprobs --repository-format=docker --location=europe-west1
-   ```
-
-3. Construire l'image chez Google, depuis la racine du projet. Rien n'est
-   construit sur votre machine. Comptez 10 à 15 min : le délai est porté à
-   30 min, car celui par défaut (10 min) est trop court pour télécharger le
-   modèle.
-
-   ```bash
-   IMAGE="europe-west1-docker.pkg.dev/$(gcloud config get-value project)/logprobs/api"
-   gcloud builds submit --tag "$IMAGE" --timeout=30m .
-   ```
-
-4. Déployer :
-
-   ```bash
-   gcloud run deploy logprobs-api \
-     --image "$IMAGE" \
-     --region europe-west1 \
-     --allow-unauthenticated \
-     --cpu 4 --memory 8Gi \
-     --min-instances 0 --max-instances 1 \
-     --concurrency 5 \
-     --timeout 300 \
-     --cpu-boost \
-     --set-env-vars "^@^API_ALLOWED_ORIGINS=https://mon-site.fr,https://www.mon-site.fr@DAILY_ANALYSIS_LIMIT=100@EXPOSE_BLOCKED_ANSWERS=true"
-   ```
-
-   - `--min-instances 0` : le serveur s'éteint quand il n'est pas utilisé
-     (gratuit), au prix du temps de réveil.
-   - `--max-instances 1` : plafonne la consommation.
-   - `europe-west1` (Belgique) : les données restent dans l'UE.
-   - Ne cochez **pas** « CPU toujours alloué » : le CPU serait facturé en
-     permanence.
-   - Le préfixe `^@^` change le séparateur des variables, ce qui permet de
-     mettre des virgules dans `API_ALLOWED_ORIGINS`.
-   - `EXPOSE_BLOCKED_ANSWERS=true` sert à la démo « protection on/off ». Pour
+     `EXPOSE_BLOCKED_ANSWERS=true` sert à la démo « protection on/off ». Pour
      un usage réel, passez-le à `false` : la réponse bloquée n'est alors plus
      envoyée au navigateur.
+7. Cliquer sur **Créer**. Le premier build télécharge le modèle : comptez
+   10 à 15 min. Pour suivre sa progression : menu ☰ → **Cloud Build** →
+   **Historique**.
+8. Une fois le build terminé, l'URL du service s'affiche en haut de la page
+   Cloud Run (`https://logprobs-api-….run.app`). Pour tester, ouvrez
+   `https://logprobs-api-….run.app/health` dans le navigateur : la page doit
+   répondre en JSON (1 à 2 min d'attente si le serveur dormait).
 
-5. La commande affiche l'URL du service (`https://logprobs-api-….run.app`).
-   Tester :
+**Redéployer** : chaque `git push` sur la branche `main` reconstruit et
+redéploie automatiquement le service. Pour modifier un paramètre (mémoire,
+variables…) : Cloud Run → `logprobs-api` → **Modifier et déployer une
+nouvelle révision**.
 
-   ```bash
-   curl https://logprobs-api-….run.app/health
-   ```
-
-Pour redéployer après une modification, relancez les étapes 3 et 4. Chaque
-build stocke une nouvelle image de ~4 Go, et l'ancienne reste facturée.
-Supprimez les anciennes versions dans la console (Artifact Registry →
-`logprobs` → `api`) ou configurez une
-[règle de nettoyage](https://cloud.google.com/artifact-registry/docs/repositories/cleanup-policy)
-qui ne garde que la plus récente.
+**Nettoyer les anciennes images** : chaque build stocke une nouvelle image de
+~4 Go, et les anciennes restent facturées. Menu ☰ → **Artifact Registry** →
+dépôt `cloud-run-source-deploy` : supprimez les anciennes versions à la main,
+ou **Modifier le dépôt** → **Règles de nettoyage** pour ne garder que la plus
+récente ([documentation](https://cloud.google.com/artifact-registry/docs/repositories/cleanup-policy)).
 
 ### Intégration dans le site
 
